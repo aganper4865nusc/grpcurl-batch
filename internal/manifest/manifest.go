@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -8,77 +9,84 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Call represents a single gRPC call definition.
+// Call represents a single gRPC call entry in the manifest.
 type Call struct {
-	Name       string            `yaml:"name"`
-	Address    string            `yaml:"address"`
-	Method     string            `yaml:"method"`
-	Data       string            `yaml:"data"`
-	Metadata   map[string]string `yaml:"metadata"`
-	Retries    int               `yaml:"retries"`
-	RetryDelay time.Duration     `yaml:"retry_delay"`
-	Timeout    time.Duration     `yaml:"timeout"`
+	Service  string            `yaml:"service"`
+	Method   string            `yaml:"method"`
+	Address  string            `yaml:"address"`
+	Data     string            `yaml:"data"`
+	Tags     []string          `yaml:"tags"`
+	Headers  map[string]string `yaml:"headers"`
+	Timeout  time.Duration     `yaml:"timeout"`
+	Retries  int               `yaml:"retries"`
+	Insecure bool              `yaml:"insecure"`
 }
 
-// Manifest is the top-level structure of a batch manifest file.
+// Manifest holds the full set of calls and global defaults.
 type Manifest struct {
-	Version     string `yaml:"version"`
-	Concurrency int    `yaml:"concurrency"`
-	Calls       []Call `yaml:"calls"`
+	Defaults CallDefaults `yaml:"defaults"`
+	Calls    []Call       `yaml:"calls"`
 }
 
-const (
-	defaultConcurrency = 5
-	defaultRetries     = 0
-	defaultRetryDelay  = 500 * time.Millisecond
-	defaultTimeout     = 30 * time.Second
-)
+// CallDefaults provides fallback values applied to every call.
+type CallDefaults struct {
+	Address  string        `yaml:"address"`
+	Timeout  time.Duration `yaml:"timeout"`
+	Retries  int           `yaml:"retries"`
+	Insecure bool          `yaml:"insecure"`
+}
 
-// Load reads and parses a manifest YAML file, applying defaults.
+// Load reads a YAML manifest from path, applies defaults, and validates it.
 func Load(path string) (*Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading manifest %q: %w", path, err)
+		return nil, fmt.Errorf("reading manifest: %w", err)
 	}
-
 	var m Manifest
 	if err := yaml.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("parsing manifest %q: %w", path, err)
+		return nil, fmt.Errorf("parsing manifest: %w", err)
 	}
-
+	applyDefaults(&m)
 	if err := validate(&m); err != nil {
 		return nil, err
 	}
-
-	applyDefaults(&m)
 	return &m, nil
 }
 
-func validate(m *Manifest) error {
-	for i, c := range m.Calls {
-		if c.Name == "" {
-			return fmt.Errorf("call[%d]: missing required field 'name'", i)
-		}
+// applyDefaults fills in missing per-call fields from manifest-level defaults.
+func applyDefaults(m *Manifest) {
+	for i := range m.Calls {
+		c := &m.Calls[i]
 		if c.Address == "" {
-			return fmt.Errorf("call %q: missing required field 'address'", c.Name)
+			c.Address = m.Defaults.Address
+		}
+		if c.Timeout == 0 {
+			c.Timeout = m.Defaults.Timeout
+		}
+		if c.Retries == 0 {
+			c.Retries = m.Defaults.Retries
+		}
+		if !c.Insecure {
+			c.Insecure = m.Defaults.Insecure
+		}
+	}
+}
+
+// validate checks that all required fields are present.
+func validate(m *Manifest) error {
+	if len(m.Calls) == 0 {
+		return errors.New("manifest must contain at least one call")
+	}
+	for i, c := range m.Calls {
+		if c.Service == "" {
+			return fmt.Errorf("call[%d]: service is required", i)
 		}
 		if c.Method == "" {
-			return fmt.Errorf("call %q: missing required field 'method'", c.Name)
+			return fmt.Errorf("call[%d]: method is required", i)
+		}
+		if c.Address == "" {
+			return fmt.Errorf("call[%d]: address is required (set per-call or in defaults)", i)
 		}
 	}
 	return nil
-}
-
-func applyDefaults(m *Manifest) {
-	if m.Concurrency <= 0 {
-		m.Concurrency = defaultConcurrency
-	}
-	for i := range m.Calls {
-		if m.Calls[i].RetryDelay == 0 {
-			m.Calls[i].RetryDelay = defaultRetryDelay
-		}
-		if m.Calls[i].Timeout == 0 {
-			m.Calls[i].Timeout = defaultTimeout
-		}
-	}
 }
