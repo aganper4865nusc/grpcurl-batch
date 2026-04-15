@@ -1,26 +1,38 @@
 package runner
 
-import (
-	"fmt"
-	"io"
-	"strings"
-	"text/tabwriter"
-)
+import "time"
 
-// Summary aggregates run results.
-type Summary struct {
-	Total   int
-	Success int
-	Failed  int
-	Results []Result
+// CallResult holds the outcome of a single gRPC call attempt.
+type CallResult struct {
+	CallName  string
+	Address   string
+	Method    string
+	Success   bool
+	Attempts  int
+	Output    string
+	Error     string
+	Duration  time.Duration
 }
 
-// Summarize builds a Summary from a slice of Results.
-func Summarize(results []Result) Summary {
-	s := Summary{Total: len(results), Results: results}
+// Summary aggregates results from all calls in a batch run.
+type Summary struct {
+	Total     int
+	Succeeded int
+	Failed    int
+	Results   []CallResult
+	TotalTime time.Duration
+}
+
+// Summarize builds a Summary from a slice of CallResults.
+func Summarize(results []CallResult, elapsed time.Duration) Summary {
+	s := Summary{
+		Total:     len(results),
+		Results:   results,
+		TotalTime: elapsed,
+	}
 	for _, r := range results {
-		if r.Err == nil {
-			s.Success++
+		if r.Success {
+			s.Succeeded++
 		} else {
 			s.Failed++
 		}
@@ -28,30 +40,10 @@ func Summarize(results []Result) Summary {
 	return s
 }
 
-// WriteTo writes a human-readable summary table to w.
-func (s Summary) WriteTo(w io.Writer) error {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tATTEMPTS\tDURATION\tSTATUS")
-	fmt.Fprintln(tw, strings.Repeat("-", 60))
-
-	for _, r := range s.Results {
-		status := "OK"
-		if r.Err != nil {
-			status = fmt.Sprintf("ERR: %s", r.Err.Error())
-		}
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n",
-			r.CallName,
-			r.Attempts,
-			r.Duration.Round(1000000),
-			status,
-		)
+// SuccessRate returns the percentage of successful calls.
+func (s Summary) SuccessRate() float64 {
+	if s.Total == 0 {
+		return 0
 	}
-
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(w, "\nTotal: %d | Success: %d | Failed: %d\n",
-		s.Total, s.Success, s.Failed)
-	return nil
+	return float64(s.Succeeded) / float64(s.Total) * 100
 }

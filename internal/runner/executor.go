@@ -8,55 +8,55 @@ import (
 	"strings"
 	"time"
 
-	"github.com/your-org/grpcurl-batch/internal/manifest"
+	"github.com/user/grpcurl-batch/internal/manifest"
 )
 
-// GrpcurlExecutor runs grpcurl as a subprocess.
-type GrpcurlExecutor struct {
-	BinaryPath string
-	Timeout    time.Duration
+// Executor defines the interface for executing a single gRPC call.
+type Executor interface {
+	Execute(ctx context.Context, call manifest.Call) (string, error)
 }
 
-// NewGrpcurlExecutor creates an executor using the grpcurl binary.
-func NewGrpcurlExecutor(binaryPath string, timeout time.Duration) *GrpcurlExecutor {
+// GrpcurlExecutor executes gRPC calls using the grpcurl CLI.
+type GrpcurlExecutor struct {
+	BinaryPath string
+}
+
+// NewGrpcurlExecutor creates a new GrpcurlExecutor.
+func NewGrpcurlExecutor(binaryPath string) *GrpcurlExecutor {
 	if binaryPath == "" {
 		binaryPath = "grpcurl"
 	}
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	return &GrpcurlExecutor{BinaryPath: binaryPath, Timeout: timeout}
+	return &GrpcurlExecutor{BinaryPath: binaryPath}
 }
 
-// Execute builds and runs a grpcurl command for the given call.
-func (g *GrpcurlExecutor) Execute(ctx context.Context, call manifest.Call) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, g.Timeout)
-	defer cancel()
-
-	args := g.buildArgs(call)
-	cmd := exec.CommandContext(ctx, g.BinaryPath, args...)
+// Execute runs grpcurl with the given call parameters.
+func (e *GrpcurlExecutor) Execute(ctx context.Context, call manifest.Call) (string, error) {
+	args := buildArgs(call)
+	cmd := exec.CommandContext(ctx, e.BinaryPath, args...)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("grpcurl failed for %q: %w — stderr: %s", call.Name, err, strings.TrimSpace(stderr.String()))
+	start := time.Now()
+	err := cmd.Run()
+	_ = time.Since(start)
+
+	if err != nil {
+		return "", fmt.Errorf("grpcurl error: %w — stderr: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-func (g *GrpcurlExecutor) buildArgs(call manifest.Call) []string {
+// buildArgs constructs grpcurl CLI arguments from a Call definition.
+func buildArgs(call manifest.Call) []string {
 	args := []string{"-plaintext"}
-
 	for k, v := range call.Metadata {
 		args = append(args, "-H", fmt.Sprintf("%s: %s", k, v))
 	}
-
 	if call.Data != "" {
 		args = append(args, "-d", call.Data)
 	}
-
 	args = append(args, call.Address, call.Method)
 	return args
 }

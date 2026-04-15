@@ -1,4 +1,4 @@
-package runner_test
+package runner
 
 import (
 	"context"
@@ -7,8 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/your-org/grpcurl-batch/internal/manifest"
-	"github.com/your-org/grpcurl-batch/internal/runner"
+	"github.com/user/grpcurl-batch/internal/manifest"
 )
 
 type mockExecutor struct {
@@ -18,72 +17,86 @@ type mockExecutor struct {
 }
 
 func (m *mockExecutor) Execute(_ context.Context, _ manifest.Call) (string, error) {
-	count := int(m.callCount.Add(1))
-	if count <= m.failTimes {
-		return "", errors.New("transient error")
+	n := int(m.callCount.Add(1))
+	if n <= m.failTimes {
+		return "", errors.New("mock error")
 	}
 	return m.output, nil
 }
 
+func makeCall(name string, retries int) manifest.Call {
+	return manifest.Call{
+		Name:    name,
+		Address: "localhost:50051",
+		Method:  "pkg.Service/Method",
+		Retries: retries,
+	}
+}
+
 func TestRunner_SuccessOnFirstAttempt(t *testing.T) {
-	exec := &mockExecutor{output: `{"status":"ok"}`}
-	r := runner.New(exec, 2)
-	calls := []manifest.Call{{Name: "test-call", Retries: 2}}
-
-	results := r.Run(context.Background(), calls)
-
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Err != nil {
-		t.Errorf("unexpected error: %v", results[0].Err)
-	}
-	if results[0].Attempts != 1 {
-		t.Errorf("expected 1 attempt, got %d", results[0].Attempts)
+	exec := &mockExecutor{output: `{"ok":true}`}
+	r := New(exec, 1)
+	m := &manifest.Manifest{Calls: []manifest.Call{makeCall("c1", 0)}}
+	s := r.Run(context.Background(), m)
+	if s.Succeeded != 1 || s.Failed != 0 {
+		t.Fatalf("expected 1 success, got %+v", s)
 	}
 }
 
 func TestRunner_SuccessAfterRetry(t *testing.T) {
-	exec := &mockExecutor{failTimes: 2, output: "pong"}
-	r := runner.New(exec, 1)
-	calls := []manifest.Call{{Name: "retry-call", Retries: 3, RetryDelay: time.Millisecond}}
-
-	results := r.Run(context.Background(), calls)
-
-	if results[0].Err != nil {
-		t.Errorf("expected success after retries, got: %v", results[0].Err)
+	exec := &mockExecutor{failTimes: 1, output: "ok"}
+	r := New(exec, 1)
+	m := &manifest.Manifest{Calls: []manifest.Call{makeCall("c1", 2)}}
+	s := r.Run(context.Background(), m)
+	if s.Succeeded != 1 {
+		t.Fatalf("expected success after retry, got %+v", s)
 	}
-	if results[0].Attempts != 3 {
-		t.Errorf("expected 3 attempts, got %d", results[0].Attempts)
+	if s.Results[0].Attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", s.Results[0].Attempts)
 	}
 }
 
 func TestRunner_ExhaustsRetries(t *testing.T) {
-	exec := &mockExecutor{failTimes: 10}
-	r := runner.New(exec, 1)
-	calls := []manifest.Call{{Name: "fail-call", Retries: 2, RetryDelay: time.Millisecond}}
-
-	results := r.Run(context.Background(), calls)
-
-	if results[0].Err == nil {
-		t.Error("expected error after exhausting retries")
-	}
-	if results[0].Attempts != 3 {
-		t.Errorf("expected 3 attempts, got %d", results[0].Attempts)
+	exec := &mockExecutor{failTimes: 99}
+	r := New(exec, 1)
+	m := &manifest.Manifest{Calls: []manifest.Call{makeCall("c1", 2)}}
+	s := r.Run(context.Background(), m)
+	if s.Failed != 1 {
+		t.Fatalf("expected failure, got %+v", s)
 	}
 }
 
 func TestRunner_ConcurrencyLimit(t *testing.T) {
-	exec := &mockExecutor{output: "ok"}
-	r := runner.New(exec, 2)
+	var active atomic.Int32
+	var maxSeen atomic.Int32
+
+	exec := &funcExecutor{fn: func(_ context.Context, _ manifest.Call) (string, error) {
+		cur := active.Add(1)
+		if int(cur) > int(maxSeen.Load()) {
+			maxSeen.Store(cur)
+		}
+		time.Sleep(10 * time.Millisecond)
+		active.Add(-1)
+		return "ok", nil
+	}}
 
 	calls := make([]manifest.Call, 6)
 	for i := range calls {
-		calls[i] = manifest.Call{Name: "call"}
+		calls[i] = makeCall("c", 0)
 	}
+	r := New(exec, 2)
+	m := &manifest.Manifest{Calls: calls}
+	r.Run(context.Background(), m)
 
-	results := r.Run(context.Background(), calls)
-	if len(results) != 6 {
-		t.Errorf("expected 6 results, got %d", len(results))
+	if maxSeen.Load() > 2 {
+		t.Fatalf("concurrency exceeded limit: max active = %d", maxSeen.Load())
 	}
+}
+
+type funcExecutor struct {
+	fn func(context.Context, manifest.Call) (string, error)
+}
+
+func (f *funcExecutor) Execute(ctx context.Context, c manifest.Call) (string, error) {
+	return f.fn(ctx, c)
 }

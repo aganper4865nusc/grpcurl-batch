@@ -5,86 +5,79 @@ import (
 	"sync"
 	"time"
 
-	"github.com/your-org/grpcurl-batch/internal/manifest"
+	"github.com/user/grpcurl-batch/internal/manifest"
 )
 
-// Result holds the outcome of a single gRPC call.
-type Result struct {
-	CallName string
-	Attempts int
-	Duration time.Duration
-	Output   string
-	Err      error
-}
-
-// Executor defines how a single gRPC call is executed.
-type Executor interface {
-	Execute(ctx context.Context, call manifest.Call) (string, error)
-}
-
-// Runner orchestrates batch execution with concurrency and retry.
+// Runner executes batch gRPC calls with concurrency and retry controls.
 type Runner struct {
 	executor    Executor
 	concurrency int
 }
 
 // New creates a Runner with the given executor and concurrency limit.
-func New(executor Executor, concurrency int) *Runner {
+func New(exec Executor, concurrency int) *Runner {
 	if concurrency <= 0 {
 		concurrency = 1
 	}
-	return &Runner{executor: executor, concurrency: concurrency}
+	return &Runner{executor: exec, concurrency: concurrency}
 }
 
-// Run executes all calls from the manifest concurrently and returns results.
-func (r *Runner) Run(ctx context.Context, calls []manifest.Call) []Result {
+// Run executes all calls in the manifest and returns a Summary.
+func (r *Runner) Run(ctx context.Context, m *manifest.Manifest) Summary {
+	start := time.Now()
 	sem := make(chan struct{}, r.concurrency)
-	results := make([]Result, len(calls))
-	var wg sync.WaitGroup
+	resultsCh := make(chan CallResult, len(m.Calls))
 
-	for i, call := range calls {
+	var wg sync.WaitGroup
+	for _, call := range m.Calls {
 		wg.Add(1)
-		go func(idx int, c manifest.Call) {
+		sem <- struct{}{}
+		go func(c manifest.Call) {
 			defer wg.Done()
-			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[idx] = r.runWithRetry(ctx, c)
-		}(i, call)
+			resultsCh <- r.runWithRetry(ctx, c)
+		}(call)
 	}
 
 	wg.Wait()
-	return results
+	close(resultsCh)
+
+	var results []CallResult
+	for res := range resultsCh {
+		results = append(results, res)
+	}
+	return Summarize(results, time.Since(start))
 }
 
-func (r *Runner) runWithRetry(ctx context.Context, call manifest.Call) Result {
-	start := time.Now()
-	maxAttempts := call.Retries + 1
-	var lastErr error
-	var output string
+// runWithRetry attempts a call up to maxRetries+1 times.
+func (r *Runner) runWithRetry(ctx context.Context, call manifest.Call) CallResult {
+	result := CallResult{
+		CallName: call.Name,
+		Address:  call.Address,
+		Method:   call.Method,
+	}
 
+	maxAttempts := call.Retries + 1
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		output, lastErr = r.executor.Execute(ctx, call)
-		if lastErr == nil {
-			return Result{
-				CallName: call.Name,
-				Attempts: attempt,
-				Duration: time.Since(start),
-				Output:   output,
-			}
+		start := time.Now()
+		out, err := r.executor.Execute(ctx, call)
+		result.Attempts = attempt
+		result.Duration += time.Since(start)
+
+		if err == nil {
+			result.Success = true
+			result.Output = out
+			return result
 		}
-		if attempt < maxAttempts {
+		result.Error = err.Error()
+
+		if attempt < maxAttempts && call.RetryDelay > 0 {
 			select {
 			case <-ctx.Done():
-				return Result{CallName: call.Name, Attempts: attempt, Duration: time.Since(start), Err: ctx.Err()}
+				return result
 			case <-time.After(call.RetryDelay):
 			}
 		}
 	}
-
-	return Result{
-		CallName: call.Name,
-		Attempts: maxAttempts,
-		Duration: time.Since(start),
-		Err:      lastErr,
-	}
+	return result
 }
