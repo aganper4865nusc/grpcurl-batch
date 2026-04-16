@@ -8,57 +8,49 @@ import (
 
 // RateLimiter controls the rate of gRPC calls using a token bucket approach.
 type RateLimiter struct {
-	mu       sync.Mutex
+	rps      float64
 	tokens   float64
 	max      float64
-	rate     float64 // tokens per second
 	lastTick time.Time
+	mu       sync.Mutex
 }
 
-// NewRateLimiter creates a RateLimiter that allows up to rps calls per second.
-// If rps is zero or negative, no rate limiting is applied.
+// NewRateLimiter creates a RateLimiter allowing rps calls per second.
+// rps <= 0 disables rate limiting.
 func NewRateLimiter(rps float64) *RateLimiter {
-	if rps <= 0 {
-		return &RateLimiter{rate: 0}
-	}
 	return &RateLimiter{
+		rps:      rps,
 		tokens:   rps,
 		max:      rps,
-		rate:     rps,
 		lastTick: time.Now(),
 	}
 }
 
-// Wait blocks until a token is available or the context is cancelled.
-func (r *RateLimiter) Wait(ctx context.Context) error {
-	if r.rate <= 0 {
+// Wait blocks until a token is available or ctx is cancelled.
+func (rl *RateLimiter) Wait(ctx context.Context) error {
+	if rl.rps <= 0 {
 		return nil
 	}
-
 	for {
-		r.mu.Lock()
+		rl.mu.Lock()
 		now := time.Now()
-		elapsed := now.Sub(r.lastTick).Seconds()
-		r.tokens += elapsed * r.rate
-		if r.tokens > r.max {
-			r.tokens = r.max
+		elapsed := now.Sub(rl.lastTick).Seconds()
+		rl.tokens += elapsed * rl.rps
+		if rl.tokens > rl.max {
+			rl.tokens = rl.max
 		}
-		r.lastTick = now
-
-		if r.tokens >= 1.0 {
-			r.tokens -= 1.0
-			r.mu.Unlock()
+		rl.lastTick = now
+		if rl.tokens >= 1 {
+			rl.tokens--
+			rl.mu.Unlock()
 			return nil
 		}
-
-		// Calculate how long until next token is available.
-		waitDuration := time.Duration((1.0-r.tokens)/r.rate*1000) * time.Millisecond
-		r.mu.Unlock()
-
+		wait := time.Duration(float64(time.Second) / rl.rps)
+		rl.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(waitDuration):
+		case <-time.After(wait):
 		}
 	}
 }
