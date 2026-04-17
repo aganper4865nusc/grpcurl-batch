@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -17,6 +18,7 @@ func DefaultTimeoutPolicy(timeout time.Duration) *TimeoutPolicy {
 }
 
 // Execute runs fn within the configured timeout.
+// If the timeout is exceeded, a descriptive error is returned indicating the duration.
 func (tp *TimeoutPolicy) Execute(ctx context.Context, fn func(context.Context) (string, error)) (string, error) {
 	if tp.Timeout <= 0 {
 		return fn(ctx)
@@ -37,6 +39,6 @@ func (tp *TimeoutPolicy) Execute(ctx context.Context, fn func(context.Context) (
 	case r := <-ch:
 		return r.val, r.err
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", fmt.Errorf("call exceeded timeout of %s: %w", tp.Timeout, ctx.Err())
 	}
 }
