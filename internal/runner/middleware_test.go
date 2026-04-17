@@ -67,6 +67,20 @@ func TestWithCircuitBreaker_PassesThrough(t *testing.T) {
 	}
 }
 
+func TestWithCircuitBreaker_OpensAfterFailures(t *testing.T) {
+	cb := NewCircuitBreaker(3, time.Second)
+	f := Chain(failCall, WithCircuitBreaker(cb))
+	ctx := context.Background()
+	// Exhaust the failure threshold
+	for i := 0; i < 3; i++ {
+		f(ctx, manifest.Call{}) //nolint:errcheck
+	}
+	_, err := f(ctx, manifest.Call{})
+	if !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("expected ErrCircuitOpen after threshold, got %v", err)
+	}
+}
+
 func TestWithBulkhead_PassesThrough(t *testing.T) {
 	b := NewBulkheadPolicy(5)
 	f := Chain(noopCall, WithBulkhead(b))
