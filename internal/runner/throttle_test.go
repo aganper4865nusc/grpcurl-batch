@@ -73,3 +73,18 @@ func TestThrottlePolicy_ConcurrentSafety(t *testing.T) {
 		t.Fatalf("expected 50, got %d", got)
 	}
 }
+
+func TestThrottlePolicy_ResetsAfterWindow(t *testing.T) {
+	th := NewThrottlePolicy(2, 100*time.Millisecond)
+	ctx := context.Background()
+	_ = th.Wait(ctx)
+	_ = th.Wait(ctx)
+
+	// Wait for the window to expire, then confirm we can proceed without blocking.
+	time.Sleep(150 * time.Millisecond)
+	start := time.Now()
+	_ = th.Wait(ctx)
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("expected no throttle delay after window reset, got %v", elapsed)
+	}
+}
