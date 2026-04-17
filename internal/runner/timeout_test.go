@@ -85,3 +85,19 @@ func TestDefaultTimeoutPolicy_Is30Seconds(t *testing.T) {
 		t.Fatalf("expected 30s, got %v", tp.Timeout)
 	}
 }
+
+func TestTimeoutPolicy_ContextPassedToFn(t *testing.T) {
+	tp := TimeoutPolicy{Timeout: 500 * time.Millisecond}
+	var deadline time.Time
+	var ok bool
+	_ = tp.Apply(context.Background(), func(ctx context.Context) error {
+		deadline, ok = ctx.Deadline()
+		return nil
+	})
+	if !ok {
+		t.Fatal("expected context to have a deadline set")
+	}
+	if time.Until(deadline) > 500*time.Millisecond {
+		t.Fatalf("deadline too far in the future: %v", deadline)
+	}
+}
