@@ -65,6 +65,21 @@ func TestBulkhead_ReleasesAfterDone(t *testing.T) {
 	}
 }
 
+func TestBulkhead_ReleasesAfterError(t *testing.T) {
+	b := NewBulkheadPolicy(1)
+	_ = b.Do(context.Background(), func(ctx context.Context) error {
+		return context.DeadlineExceeded
+	})
+	if b.Active() != 0 {
+		t.Fatalf("expected 0 active after error, got %d", b.Active())
+	}
+	// Slot should be free; a subsequent call must not be rejected.
+	err := b.Do(context.Background(), func(ctx context.Context) error { return nil })
+	if err != nil {
+		t.Fatalf("expected nil after slot released, got %v", err)
+	}
+}
+
 func TestBulkhead_ConcurrentSafety(t *testing.T) {
 	b := NewBulkheadPolicy(10)
 	var wg sync.WaitGroup
