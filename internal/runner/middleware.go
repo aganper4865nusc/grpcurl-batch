@@ -2,21 +2,21 @@ package runner
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"github.com/user/grpcurl-batch/internal/manifest"
 )
 
 // Middleware wraps a CallFunc with additional behaviour.
-type Middleware func(CallFunc) CallFunc
+type Middleware func(next CallFunc) CallFunc
 
 // CallFunc is a function that executes a single gRPC call.
 type CallFunc func(ctx context.Context, call manifest.Call) (string, error)
 
-// Chain applies middlewares in order (first middleware is outermost).
-func Chain(base CallFunc, mws ...Middleware) CallFunc {
-	for i := len(mws) - 1; i >= 0; i-- {
-		base = mws[i](base)
+// Chain applies middlewares in order (first = outermost).
+func Chain(base CallFunc, middlewares ...Middleware) CallFunc {
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		base = middlewares[i](base)
 	}
 	return base
 }
@@ -26,7 +26,7 @@ func WithRateLimit(rl *RateLimiter) Middleware {
 	return func(next CallFunc) CallFunc {
 		return func(ctx context.Context, call manifest.Call) (string, error) {
 			if err := rl.Wait(ctx); err != nil {
-				return "", err
+				return "", fmt.Errorf("rate limit: %w", err)
 			}
 			return next(ctx, call)
 		}
@@ -48,31 +48,31 @@ func WithCircuitBreaker(cb *CircuitBreaker) Middleware {
 func WithTimeout(tp *TimeoutPolicy) Middleware {
 	return func(next CallFunc) CallFunc {
 		return func(ctx context.Context, call manifest.Call) (string, error) {
-			var result string
-			err := tp.Do(ctx, func(ctx context.Context) error {
-				var e error
-				result, e = next(ctx, call)
-				return e
+			return tp.Do(ctx, func(ctx context.Context) (string, error) {
+				return next(ctx, call)
 			})
-			return result, err
 		}
 	}
 }
 
-// WithBulkhead wraps a CallFunc with bulkhead isolation.
+// WithBulkhead wraps a CallFunc with bulkhead concurrency control.
 func WithBulkhead(b *BulkheadPolicy) Middleware {
 	return func(next CallFunc) CallFunc {
 		return func(ctx context.Context, call manifest.Call) (string, error) {
-			var result string
-			err := b.Do(ctx, func(ctx context.Context) error {
-				var e error
-				result, e = next(ctx, call)
-				return e
+			return b.Do(ctx, func(ctx context.Context) (string, error) {
+				return next(ctx, call)
 			})
-			if errors.Is(err, ErrBulkheadFull) {
-				return "", err
-			}
-			return result, err
+		}
+	}
+}
+
+// WithDrain wraps a CallFunc tracking in-flight calls via DrainPolicy.
+func WithDrain(d *DrainPolicy) Middleware {
+	return func(next CallFunc) CallFunc {
+		return func(ctx context.Context, call manifest.Call) (string, error) {
+			d.Acquire()
+			defer d.Release()
+			return next(ctx, call)
 		}
 	}
 }
