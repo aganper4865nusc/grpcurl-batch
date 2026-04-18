@@ -35,6 +35,7 @@ func (p *DeadlinePolicy) Wrap(ctx context.Context) (context.Context, context.Can
 }
 
 // Remaining returns how much time is left before the deadline.
+// Returns 0 if no deadline is set. Returns a negative duration if already exceeded.
 func (p *DeadlinePolicy) Remaining() time.Duration {
 	if p.deadline.IsZero() {
 		return 0
@@ -45,6 +46,17 @@ func (p *DeadlinePolicy) Remaining() time.Duration {
 // Exceeded reports whether the deadline has already passed.
 func (p *DeadlinePolicy) Exceeded() bool {
 	return !p.deadline.IsZero() && time.Now().After(p.deadline)
+}
+
+// IsSet reports whether a deadline has been configured.
+func (p *DeadlinePolicy) IsSet() bool {
+	return !p.deadline.IsZero()
+}
+
+// Deadline returns the underlying deadline time.
+// The boolean is false if no deadline is set, matching the context.Context convention.
+func (p *DeadlinePolicy) Deadline() (time.Time, bool) {
+	return p.deadline, !p.deadline.IsZero()
 }
 
 // String returns a human-readable description of the deadline.
