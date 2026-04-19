@@ -41,3 +41,16 @@ func TestJitterPolicy_ExponentialBase_StaysBounded(t *testing.T) {
 		}
 	}
 }
+
+// TestJitterPolicy_ZeroFactor ensures that a jitter factor of 0 returns the
+// base delay exactly, with no random component applied.
+func TestJitterPolicy_ZeroFactor(t *testing.T) {
+	base := 100 * time.Millisecond
+	j := NewJitterPolicy(fixedBackoff(base), 0.0)
+	for attempt := 0; attempt < 5; attempt++ {
+		d := j.Delay(attempt)
+		if d != base {
+			t.Errorf("attempt %d: expected %v with zero jitter, got %v", attempt, base, d)
+		}
+	}
+}
