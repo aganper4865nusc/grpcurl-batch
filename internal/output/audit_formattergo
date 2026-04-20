@@ -1,0 +1,66 @@
+package output
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"text/tabwriter"
+	"time"
+)
+
+// AuditRecord is a serialisable view of a single audit event, decoupled from
+// the runner package to avoid import cycles.
+type AuditRecord struct {
+	Timestamp time.Time `json:"timestamp"`
+	Service   string    `json:"service"`
+	Method    string    `json:"method"`
+	Address   string    `json:"address"`
+	LatencyMs int64     `json:"latency_ms"`
+	Success   bool      `json:"success"`
+	Error     string    `json:"error,omitempty"`
+	Response  string    `json:"response,omitempty"`
+}
+
+// AuditFormatter writes audit records in text or JSON format.
+type AuditFormatter struct {
+	w io.Writer
+}
+
+// NewAuditFormatter returns an AuditFormatter writing to w.
+// If w is nil, os.Stdout is used.
+func NewAuditFormatter(w io.Writer) *AuditFormatter {
+	if w == nil {
+		w = os.Stdout
+	}
+	return &AuditFormatter{w: w}
+}
+
+// WriteText renders records as an aligned table.
+func (f *AuditFormatter) WriteText(records []AuditRecord) error {
+	tw := tabwriter.NewWriter(f.w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "TIMESTAMP\tSERVICE\tMETHOD\tADDRESS\tLATENCY_MS\tSUCCESS\tERROR")
+	for _, r := range records {
+		status := "OK"
+		if !r.Success {
+			status = "FAIL"
+		}
+		errStr := r.Error
+		if errStr == "" {
+			errStr = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			r.Timestamp.Format(time.RFC3339),
+			r.Service, r.Method, r.Address,
+			r.LatencyMs, status, errStr,
+		)
+	}
+	return tw.Flush()
+}
+
+// WriteJSON renders records as a JSON array.
+func (f *AuditFormatter) WriteJSON(records []AuditRecord) error {
+	enc := json.NewEncoder(f.w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(records)
+}
