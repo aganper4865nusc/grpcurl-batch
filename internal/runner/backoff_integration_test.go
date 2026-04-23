@@ -54,3 +54,21 @@ func TestBackoffPolicy_MaxDelay_Clamps(t *testing.T) {
 		}
 	}
 }
+
+// TestBackoffPolicy_FirstAttempt_ReturnsBaseDelay verifies that the first
+// attempt always returns exactly the configured BaseDelay for both strategies.
+func TestBackoffPolicy_FirstAttempt_ReturnsBaseDelay(t *testing.T) {
+	base := 100 * time.Millisecond
+	strategies := []BackoffStrategy{BackoffFixed, BackoffExponential}
+	for _, strategy := range strategies {
+		p := BackoffPolicy{
+			Strategy:   strategy,
+			BaseDelay:  base,
+			MaxDelay:   5 * time.Second,
+			Multiplier: 2.0,
+		}
+		if d := p.Delay(1); d != base {
+			t.Errorf("strategy %v: attempt 1 expected BaseDelay %v, got %v", strategy, base, d)
+		}
+	}
+}
