@@ -62,6 +62,15 @@ func TestBackoffPolicy_ZeroAttempt_ReturnsZero(t *testing.T) {
 	}
 }
 
+func TestBackoffPolicy_NegativeAttempt_ReturnsZero(t *testing.T) {
+	p := DefaultBackoffPolicy()
+	for _, attempt := range []int{-1, -5, -100} {
+		if d := p.Delay(attempt); d != 0 {
+			t.Errorf("expected 0 delay for attempt %d, got %v", attempt, d)
+		}
+	}
+}
+
 func TestDefaultBackoffPolicy_IsExponential(t *testing.T) {
 	p := DefaultBackoffPolicy()
 	if p.Strategy != BackoffExponential {
