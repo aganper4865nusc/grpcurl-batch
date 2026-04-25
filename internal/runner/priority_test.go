@@ -35,6 +35,14 @@ func TestPriorityQueue_DrainEmptiesQueue(t *testing.T) {
 	}
 }
 
+func TestPriorityQueue_DrainEmpty(t *testing.T) {
+	pq := NewPriorityQueue()
+	calls := pq.Drain()
+	if len(calls) != 0 {
+		t.Errorf("expected empty slice from draining empty queue, got %d items", len(calls))
+	}
+}
+
 func TestPriorityQueue_Len(t *testing.T) {
 	pq := NewPriorityQueue()
 	if pq.Len() != 0 {
