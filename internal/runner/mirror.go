@@ -50,6 +50,13 @@ func (m *MirrorPolicy) Mirrors() []string {
 	return out
 }
 
+// Len returns the number of mirrors currently in the pool.
+func (m *MirrorPolicy) Len() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.mirrors)
+}
+
 // Wrap executes call against the primary address, fires mirror copies
 // asynchronously, and returns the primary outcome.
 func (m *MirrorPolicy) Wrap(next CallFunc) CallFunc {
