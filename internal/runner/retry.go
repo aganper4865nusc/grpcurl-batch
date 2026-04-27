@@ -45,3 +45,19 @@ func (p RetryPolicy) Execute(ctx context.Context, fn RetryableFunc) error {
 
 	return fmt.Errorf("all %d attempt(s) failed, last error: %w", p.MaxAttempts, lastErr)
 }
+
+// WithMaxAttempts returns a copy of the policy with MaxAttempts set to n.
+// If n is less than 1, it is clamped to 1.
+func (p RetryPolicy) WithMaxAttempts(n int) RetryPolicy {
+	if n < 1 {
+		n = 1
+	}
+	p.MaxAttempts = n
+	return p
+}
+
+// WithDelay returns a copy of the policy with Delay set to d.
+func (p RetryPolicy) WithDelay(d time.Duration) RetryPolicy {
+	p.Delay = d
+	return p
+}
